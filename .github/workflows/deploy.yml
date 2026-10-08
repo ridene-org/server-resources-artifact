@@ -1,0 +1,79 @@
+name: Deploy Platform Infrastructure
+
+on:
+  push:
+    branches: [ main ]
+    
+  workflow_dispatch:
+    inputs:
+      ssh_host:
+        description: 'Remote server hostname/IP'
+        required: true
+      ssh_user:
+        description: 'SSH username (default: root)'
+        required: false
+        default: 'root'
+
+permissions:
+  contents: read
+
+jobs:
+  deploy-infrastructure:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Validate Compose File
+        run: |
+          if [ ! -f "docker-compose.yaml" ]; then
+            echo "::error::docker-compose.yaml not found"
+            exit 1
+          fi
+          echo "✓ docker-compose.yaml found"
+
+      - name: Encode Environment Files
+        id: encode
+        run: |
+          if [ -f ".env" ]; then
+            ENV_B64=$(base64 -w 0 .env)
+            echo "env_b64=$ENV_B64" >> $GITHUB_OUTPUT
+            echo "✓ Encoded .env file"
+          else
+            echo "::warning::.env file not found. Using defaults from .env.example"
+            ENV_B64=$(base64 -w 0 .env.example)
+            echo "env_b64=$ENV_B64" >> $GITHUB_OUTPUT
+          fi
+          
+          COMPOSE_B64=$(base64 -w 0 docker-compose.yaml)
+          echo "compose_b64=$COMPOSE_B64" >> $GITHUB_OUTPUT
+          echo "✓ Encoded docker-compose.yaml"
+
+      - name: Deploy Platform Stack
+        uses: uncoverthefuture-org/actions@v1.6.1
+        with:
+          subaction: ssh-container-deploy
+          params_json: |
+            {
+              "ssh_host": "${{ github.event.inputs.ssh_host || secrets.SERVER_HOST }}",
+              "ssh_user": "${{ github.event.inputs.ssh_user || secrets.SERVER_USER }}",
+              "ssh_key": "${{ secrets.SERVER_SSH_KEY }}",
+              "version": "v1.0.0",
+              "image_tag": "${{ github.sha }}",
+              "prepare_host": "true",
+              "enable_traefik": "false",
+              "enable_acme": "false",
+              "domain": "",
+              "container_port": "5432",
+              "debug": "true",
+              "use_compose": "true",
+              "compose_yaml_b64": "${{ steps.encode.outputs.compose_b64 }}",
+              "env_b64": "${{ steps.encode.outputs.env_b64 }}"
+            }
+
+      - name: Verify Services
+        run: |
+          echo "Waiting 30 seconds for services to start..."
+          sleep 30
+          echo "Check logs on server: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'podman-compose logs -f'"
