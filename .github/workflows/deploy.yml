@@ -4,15 +4,6 @@ on:
   push:
     branches: [ main ]
     
-  workflow_dispatch:
-    inputs:
-      ssh_host:
-        description: 'Remote server hostname/IP'
-        required: true
-      ssh_user:
-        description: 'SSH username (default: root)'
-        required: false
-        default: 'root'
 
 permissions:
   contents: read
@@ -20,6 +11,17 @@ permissions:
 jobs:
   deploy-infrastructure:
     runs-on: ubuntu-latest
+    # ========================================================================
+    # ENVIRONMENT VARIABLES - GitHub Secrets for each environment
+    # ========================================================================
+    # These secrets contain base64-encoded .env files for each deployment env.
+    # They are exposed to the job so select-env-secret can access them.
+    # Format: <ENV_KEY>_ENV_B64 (e.g., PROD_ENV_B64, STAGING_ENV_B64, DEV_ENV_B64)
+    # ========================================================================
+    env:
+      DEV_ENV_B64: ${{ secrets.ENV_B64 }}
+      STAGING_ENV_B64: ${{ secrets.ENV_B64 }}
+      PROD_ENV_B64: ${{ secrets.ENV_B64 }}
     
     steps:
       - name: Checkout repository
@@ -56,8 +58,8 @@ jobs:
           subaction: ssh-container-deploy
           params_json: |
             {
-              "ssh_host": "${{ github.event.inputs.ssh_host || secrets.SERVER_HOST }}",
-              "ssh_user": "${{ github.event.inputs.ssh_user || secrets.SERVER_USER }}",
+              "ssh_host": "${{ secrets.SERVER_HOST }}",
+              "ssh_user": "${{ secrets.SERVER_USER }}",
               "ssh_key": "${{ secrets.SERVER_SSH_KEY }}",
               "version": "v1.0.0",
               "image_tag": "${{ github.sha }}",
@@ -65,15 +67,8 @@ jobs:
               "enable_traefik": "false",
               "enable_acme": "false",
               "domain": "",
-              "container_port": "5432",
               "debug": "true",
               "use_compose": "true",
               "compose_yaml_b64": "${{ steps.encode.outputs.compose_b64 }}",
               "env_b64": "${{ steps.encode.outputs.env_b64 }}"
             }
-
-      - name: Verify Services
-        run: |
-          echo "Waiting 30 seconds for services to start..."
-          sleep 30
-          echo "Check logs on server: ssh ${{ secrets.SERVER_USER }}@${{ secrets.SERVER_HOST }} 'podman-compose logs -f'"
